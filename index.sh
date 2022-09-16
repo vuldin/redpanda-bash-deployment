@@ -7,7 +7,9 @@ ORGANIZATION="yourorg"
 INTERNAL_HOSTS=(redpanda-internal-0.yourorg.net redpanda-internal-1.yourorg.net redpanda-internal-2.yourorg.net) # internal DNS names for each broker
 EXTERNAL_HOSTS=(redpanda-external-0.yourorg.net redpanda-external-1.yourorg.net redpanda-external-2.yourorg.net) # external DNS names for each broker
 
-ID=`wget -q -O - http://169.254.169.254/latest/meta-data/ami-launch-index` # this is the broker ID and the BROKERS array index
+# The broker ID and the array index in each HOSTS array
+# If replacing a node, you will want to hard-code this value to the same node_id as the broker being replaced.
+ID=`wget -q -O - http://169.254.169.254/latest/meta-data/ami-launch-index`
 
 yum update -y
 
