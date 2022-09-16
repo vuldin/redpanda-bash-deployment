@@ -3,41 +3,50 @@
 set -e
 
 CLUSTER_ID="test-cluster-1"
-ORGANIZATION="org-name"
-PLATFORM="ubuntu"
-# a note on HOSTS and BROKERS arrays below:
-# must be same-length arrays and ordered so host matches broker in their respective arrays
-HOSTS=(ec2-35-90-229-89.us-west-2.compute.amazonaws.com ec2-54-200-65-43.us-west-2.compute.amazonaws.com ec2-54-203-79-72.us-west-2.compute.amazonaws.com)
-BROKERS=(172.31.11.97 172.31.12.225 172.31.0.200)
+ORGANIZATION="yourorg"
+INTERNAL_HOSTS=(redpanda-internal-0.yourorg.net redpanda-internal-1.yourorg.net redpanda-internal-2.yourorg.net) # internal DNS names for each broker
+EXTERNAL_HOSTS=(redpanda-external-0.yourorg.net redpanda-external-1.yourorg.net redpanda-external-2.yourorg.net) # external DNS names for each broker
 
-for i in ${!HOSTS[@]}; do
-  HOST=${HOSTS[$i]}
-  OTHER_BROKERS=("${BROKERS[@]}")
-  unset 'OTHER_BROKERS[$i]'
-  printf -v OTHER_BROKERS_JOINED '%s,' "${OTHER_BROKERS[@]}"
-  if [ $PLATFORM == "ubuntu" ]; then
-    ssh ubuntu@$HOST 'curl -1sLf https://packages.vectorized.io/sMIXnoa7DK12JW4A/redpanda/cfg/setup/bash.deb.sh | sudo -E bash'
-    ssh ubuntu@$HOST 'sudo apt update'
-    ssh ubuntu@$HOST 'sudo apt install redpanda'
-    #ssh ubuntu@$HOST 'sudo rpk redpanda mode production'
-    #ssh ubuntu@$HOST 'sudo rpk tune all'
-    #ssh ubuntu@$HOST 'systemctl restart redpanda-tuner'
-    if [ $i -eq 0 ]; then
-      ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config bootstrap --id $i --self ${BROKERS[$i]}"
-    else
-      ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config bootstrap --id $i --self ${BROKERS[$i]} --ips ${OTHER_BROKERS_JOINED%,}"
-    fi
-    ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config set cluster_id $CLUSTER_ID"
-    ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config set organization $ORGANIZATION"
-    ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config set redpanda.advertised_kafka_api '{
-  address: ${BROKERS[$i]},
-  port: 9092
-}' --format yaml"
-    ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config set redpanda.advertised_rpc_api '{
-  address: ${BROKERS[$i]},
-  port: 33145
-}' --format yaml"
-    ssh ubuntu@$HOST 'sudo systemctl restart redpanda'
-    ssh ubuntu@$HOST "sudo -u redpanda rpk redpanda config bootstrap --id $i --self ${BROKERS[$i]} --ips ${OTHER_BROKERS_JOINED%,}"
-  fi
-done
+ID=`wget -q -O - http://169.254.169.254/latest/meta-data/ami-launch-index` # this is the broker ID and the BROKERS array index
+
+yum update -y
+
+# Manages DNS resolution via no-ip, more details here: https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/dynamic-dns.html
+# Modify or replace this section to fit your own DNS service (Route 53, etc.)
+cd ~
+wget https://dmej8g5cpdyqd.cloudfront.net/downloads/noip-duc_3.0.0-beta.5.tar.gz
+tar xf noip-duc_3.0.0-beta.5.tar.gz
+cd noip-duc_3.0.0-beta.5
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+yum groupinstall "Development Tools" -y
+/root/.cargo/bin/cargo build --release
+/root/noip-duc_3.0.0-beta.5/target/release/noip-duc -g ${INTERNAL_HOSTS[$ID]} -u $NOIP_USERNAME -p $NOIP_PASSWORD --once
+/root/noip-duc_3.0.0-beta.5/target/release/noip-duc -g ${EXTERNAL_HOSTS[$ID]} -u $NOIP_USERNAME -p $NOIP_PASSWORD --daemonize
+# End of DNS resolution section
+
+# Create a string of other broker names for seed_servers
+IP=$(ip addr show $(ip route | awk '/default/ { print $5 }') | grep "inet" | head -n 1 | awk '/inet/ {print $2}' | cut -d'/' -f1)
+OTHER_BROKERS=("${INTERNAL_HOSTS[@]}")
+unset 'OTHER_BROKERS[$ID]'
+printf -v OTHER_BROKERS_JOINED '%s,' "${OTHER_BROKERS[@]}"
+
+# Install and configure Redpanda
+curl -1sLf https://packages.vectorized.io/sMIXnoa7DK12JW4A/redpanda/cfg/setup/bash.rpm.sh | sudo -E bash
+yum install -y redpanda
+if [ $ID -eq 0 ]; then
+  sudo -u redpanda rpk redpanda config bootstrap --id $ID --self $IP
+else
+  sudo -u redpanda rpk redpanda config bootstrap --id $ID --self $IP --ips ${OTHER_BROKERS_JOINED%,}
+fi
+sudo -u redpanda rpk redpanda config set cluster_id $CLUSTER_ID
+sudo -u redpanda rpk redpanda config set organization $ORGANIZATION
+sudo -u redpanda rpk redpanda config set redpanda.advertised_kafka_api "[{address: ${EXTERNAL_HOSTS[$ID]},port: 9092}]"
+sudo -u redpanda rpk redpanda config set redpanda.advertised_rpc_api "{address: ${INTERNAL_HOSTS[$ID]},port: 33145}"
+
+# Start Redpanda
+systemctl restart redpanda
+
+# Set seed_servers for the root node
+if [ $ID -eq 0 ]; then
+  sudo -u redpanda rpk redpanda config bootstrap --id $ID --self $IP --ips ${OTHER_BROKERS_JOINED%,}
+fi
