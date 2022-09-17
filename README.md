@@ -31,11 +31,13 @@ sudo tail -f /var/log/cloud-init-output.log
 
 As-is, the script takes 2-4 minutes to complete. Most of this is due to the rust install and compilation steps in the no-ip package, so removing or replacing this section will greatly speed up startup times.
 
-## Note on DNS resolution
+## Note on dynamic DNS resolution
 
 For this example I used [no-ip](https://www.noip.com/), and two additional environment variables related to this section: `NOIP_USERNAME` and `NOIP_PASSWORD`. You will need to set these variables if you plan to use the no-ip section of this example.
 
-Setting username/password variables in code is insecure. Instead you could use [AWS Systems Manager Parameter Store](https://us-east-1.console.aws.amazon.com/systems-manager/parameters?region=us-east-1) to store these variables and retrieve the values from within this user data script.
+Setting username/password variables in code is insecure. Instead you could use [AWS Systems Manager Parameter Store](https://us-east-1.console.aws.amazon.com/systems-manager/parameters?region=us-east-1) to store and retrieve these values from within this user data script.
+
+You could also skip dynamic DNS resolution (or use static DNS resolution) by using IP addresses, but this would rely on knowing what IP address will be used for each instance. Check out [AWS Elastic IP addresses](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/elastic-ip-addresses-eip.html) for more details.
 
 ## Note on node replacement
-This script determines `node_id` based off EC2 instance number. So a replacement node will very likely not have the same instance number. You will want to manually set `ID` rather than having it set by instance number if sending this script to a new deployment that is meant to replace a formerly-existing node.
+This script determines `node_id` based off the EC2 instance number. So a replacement node will likely not have the same instance number. When you are replacing a previously existing node, you will want to manually set `ID` rather than having it set by instance number.
